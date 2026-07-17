@@ -1,4 +1,5 @@
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
+import { exec } from "node:child_process";
 import { statSync } from "node:fs";
 import { PublicKey } from "@solana/web3.js";
 import bs58 from "bs58";
@@ -291,6 +292,9 @@ export async function crankCommand(opts: {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    // Chrome sends a private-network preflight when the hosted (HTTPS) page
+    // calls this localhost API; this header lets it through.
+    res.setHeader("Access-Control-Allow-Private-Network", "true");
   }
   function json(res: ServerResponse, code: number, body: unknown): void {
     cors(res);
@@ -353,6 +357,8 @@ export async function crankCommand(opts: {
     }
   }).listen(port, () => {
     console.log(`Crank + API on http://localhost:${port}`);
-    console.log("Streaming the price. Open the dashboard and click Init Buybacks when ready.");
+    console.log(`Dashboard: ${cfg.dashboardUrl}`);
+    const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
+    exec(`${opener} ${cfg.dashboardUrl}`);
   });
 }

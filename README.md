@@ -54,7 +54,7 @@ npm install
    ```
    It funds its operator wallet, connects to the price source, and starts serving the API on `http://localhost:8787`. The posted oracle mid is `min(EMA, market)`: smoothed on the way up, instant on the way down, so the pool never overbids off a lagging EMA during a dump.
 
-2. **Open the page.** Run the hadron dashboard (`npm run dev` in neutron's `frontend/hadron-dashboard`) and go to `/buybacks` (it is intentionally unlinked from the sidebar; demo only). It shows the **asset midprice** with the **best bid** below it, and the price chart runs. No pool exists yet.
+2. **Open the page.** The crank opens [dashboard.hadron.fi/buybacks](https://dashboard.hadron.fi/buybacks) for you (the page is intentionally unlinked from the sidebar; demo only). For local dashboard development, run `npm run dev` in the dashboard repo and go to `/buybacks` instead. It shows the **asset midprice** with the **best bid** below it, and the price chart runs. No pool exists yet.
 
 3. **Init the buybacks.** From this repo run `npm run cli -- init`. The page shows each step flip live (mints, pool, kill switch, ladder). It creates the mock USDC treasury, opens the bid-only Hadron pool anchored at the live price, deposits, and posts the resting bid ladder. Within a couple of seconds the book fills in as an order book, and the crank starts posting the midprice on-chain so the ladder chases the market.
 
