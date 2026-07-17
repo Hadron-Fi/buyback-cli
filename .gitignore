@@ -1,0 +1,7 @@
+node_modules/
+dist/
+buyback.config.json
+wallet.json
+*.log
+.DS_Store
+.history.json

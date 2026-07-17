@@ -1,0 +1,28 @@
+{
+  "name": "shfl-hadron-buybacks",
+  "version": "0.1.0",
+  "description": "Backend for the Hadron buybacks demo: price crank + local API + CLI (init/faucet/status/close) over a bid-only Hadron pool on devnet. UI lives in the hadron dashboard at /buybacks.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/cli.ts crank",
+    "crank": "tsx src/cli.ts crank",
+    "cli": "tsx src/cli.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@hadron-fi/sdk-v2": "^0.1.5",
+    "@solana/spl-token": "^0.4.9",
+    "@solana/web3.js": "^1.95.0",
+    "bs58": "^5.0.0",
+    "commander": "^12.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
