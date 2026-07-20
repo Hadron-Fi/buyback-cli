@@ -1,4 +1,5 @@
 import { exec } from "node:child_process";
+import { createInterface } from "node:readline/promises";
 import { PublicKey } from "@solana/web3.js";
 import {
   createAssociatedTokenAccountIdempotentInstruction,
@@ -29,6 +30,16 @@ export async function initCommand(opts: { keypair?: string; url?: string }): Pro
   const cfg = loadOrCreateConfig();
   if (opts.keypair) cfg.keypairPath = opts.keypair;
   if (opts.url) cfg.rpcUrl = opts.url;
+
+  // Ask for the devnet RPC (Enter keeps the current one). A private RPC
+  // (e.g. Helius) avoids the public endpoint's rate limits.
+  if (!opts.url && process.stdin.isTTY) {
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const answer = (await rl.question(`Devnet RPC URL [${cfg.rpcUrl}]: `)).trim();
+    rl.close();
+    if (answer) cfg.rpcUrl = answer;
+  }
+  saveConfig(cfg);
 
   const { keypair: operator, path, created } = ensureOperatorKeypair(cfg.keypairPath);
   cfg.keypairPath = path;
