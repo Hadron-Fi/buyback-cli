@@ -3,6 +3,7 @@ import { Command } from "commander";
 import { initCommand, faucetCommand } from "./commands/init.js";
 import { buybackCommand } from "./commands/buyback.js";
 import { crankCommand } from "./commands/crank.js";
+import { ladderCommand } from "./commands/ladder.js";
 import { statusCommand } from "./commands/status.js";
 import { closeCommand } from "./commands/close.js";
 
@@ -41,6 +42,12 @@ program
   .option("--interval <ms>", "tick interval in ms (default from config)")
   .option("--live", "use the live exchange feed instead of the deterministic sim")
   .action(run(crankCommand));
+
+program
+  .command("ladder")
+  .description('Rebuild the resting bid ladder, e.g. --set "80:1000,200:2000,350:4000" (spreadBps:usd)')
+  .requiredOption("--set <spec>", "comma-separated spreadBps:usd rungs")
+  .action(run(ladderCommand));
 
 program
   .command("faucet")
