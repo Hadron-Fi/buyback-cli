@@ -34,9 +34,9 @@ export async function runCrank(opts: { interval?: string; live?: boolean }): Pro
   await ensureSol(connection, operator.publicKey, 1);
 
   const ema = new Ema(cfg.crank.emaAlpha);
-  const feed = opts.live ? new PriceFeed(cfg.priceSymbols) : null;
+  const feed = opts.live ? new PriceFeed() : null;
   console.log(
-    `Price source: ${feed ? `live (${cfg.priceSymbols.join(" -> ")})` : "deterministic sim (seeded by pool ID; the page computes the same line)"}`
+    `Price source: ${feed ? "live (Orca SOL/USDC, Coinbase fallback)" : "deterministic sim (seeded by pool ID; the page computes the same line)"}`
   );
 
   function samplePrice(): Promise<number> {

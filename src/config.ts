@@ -27,8 +27,6 @@ export interface BuybackConfig {
   priceMode: "sim" | "live";
   /** Per-tick volatility of the simulated walk (priceMode "sim"). */
   simVolPerTick: number;
-  /** Binance-style ticker symbols to try in order for the base/USD price. */
-  priceSymbols: string[];
   /** Mock base mint (the buyback asset, token X). Set on init. */
   baseMint?: string;
   /** Mock USDC mint (quote, token Y). Set on init. */
@@ -64,9 +62,6 @@ export const DEFAULT_CONFIG: BuybackConfig = {
   // here) for a dummy random walk when the real market is too quiet to demo.
   priceMode: "live",
   simVolPerTick: 0.0012,
-  // Binance.com first (works from most locations), then Binance.US (SOLUSD),
-  // then Coinbase as a final fallback. The feed module picks the first live one.
-  priceSymbols: ["SOLUSDT", "SOLUSD", "SOL-USD"],
   startPrice: 75,
   // ~10s of slots. The design doc's example is 10 slots (every-block crank on
   // low-latency infra); 25 keeps the pool live at a ~2s tick and still trips
