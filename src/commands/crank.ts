@@ -237,6 +237,7 @@ export async function crankCommand(opts: {
   // seconds, and overlapping pushes would race on the oracle sequence. The
   // chain push runs fire-and-forget behind a busy flag.
   let chainBusy = false;
+  let tickCount = 0;
 
   async function tick(): Promise<void> {
     try {
@@ -265,6 +266,17 @@ export async function crankCommand(opts: {
         ladderReady,
         error: lastError,
       };
+
+      // Visible heartbeat: one compact line per tick so the crank never
+      // looks stalled, plus a nudge when there is no pool to quote yet.
+      tickCount++;
+      console.log(
+        `price $${price.toFixed(4)}  ema $${smoothed.toFixed(4)}  oracle $${oracleMid.toFixed(4)}` +
+          (pool ? "" : "  (no pool)")
+      );
+      if (!pool && tickCount % 20 === 1) {
+        console.log('No pool yet: run "npm run cli -- init" in another terminal to stand up the buybacks.');
+      }
 
       if (pool && !chainBusy) {
         chainBusy = true;
