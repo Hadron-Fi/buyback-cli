@@ -1,14 +1,8 @@
-import {
-  Connection,
-  Keypair,
-  PublicKey,
-} from "@solana/web3.js";
+import { Connection, Keypair, PublicKey } from "@solana/web3.js";
 import {
   createMint,
   getOrCreateAssociatedTokenAccount,
   mintTo,
-  createAssociatedTokenAccountIdempotentInstruction,
-  getAssociatedTokenAddressSync,
 } from "@solana/spl-token";
 import { Hadron, HadronOrderbook, PoolState, toQ32 } from "@hadron-fi/sdk-v2";
 import {
@@ -23,19 +17,17 @@ import {
 } from "./config.js";
 
 /**
- * One-shot "init buybacks": create the mock mints if needed, create the
- * bid-only pool anchored at the live price, arm the kill switch, fund the
- * treasury, and post the resting bid ladder. Everything is signed by the
- * operator keypair (the crank's key), so the dashboard button can trigger it
- * through the crank's local server without any browser signing.
+ * Phase 1 (`npm run init`): create the mock mints if needed and stand up an
+ * EMPTY bid-only pool (no orders yet) anchored at `anchorPrice`, with the
+ * kill switch armed and swaps open. Idempotent per step so a failed/partial
+ * run can be retried cleanly.
  */
-export async function initBuybacks(
+export async function initPool(
   connection: Connection,
   operator: Keypair,
   cfg: BuybackConfig,
-  livePrice: number
+  anchorPrice: number
 ): Promise<{ pool: string; created: boolean }> {
-  // Idempotent per step so a failed/partial init can be retried cleanly.
   const alreadyLive = !!cfg.pool;
 
   // 1. Mock mints (base = the buyback asset, quote = USDC). Operator keeps
@@ -55,7 +47,7 @@ export async function initBuybacks(
   const mintX = new PublicKey(cfg.baseMint);
   const mintY = new PublicKey(cfg.usdcMint);
 
-  // 2. Create the pool anchored at the live market price (if not already made).
+  // 2. Create the pool (if not already made).
   let poolAddress: PublicKey;
   if (cfg.pool) {
     poolAddress = new PublicKey(cfg.pool);
@@ -64,7 +56,7 @@ export async function initBuybacks(
       mintX,
       mintY,
       authority: operator.publicKey,
-      initialMidpriceQ32: toQ32(livePrice),
+      initialMidpriceQ32: toQ32(anchorPrice),
       maxPrefabSlots: 1,
       maxCurvePoints: 8,
     });
@@ -73,7 +65,7 @@ export async function initBuybacks(
     poolAddress = addr;
     cfg.pool = addr.toBase58();
     cfg.seed = seed.toString();
-    cfg.startPrice = livePrice;
+    cfg.startPrice = anchorPrice;
     saveConfig(cfg);
   }
 
@@ -88,29 +80,46 @@ export async function initBuybacks(
   }
   if (stateIxs.length) await sendTx(connection, [operator], stateIxs, "ArmKillSwitch+Open");
 
-  // 4. Deposit the treasury USDC and post the bid ladder in one atomic tx
-  //    (skip if a ladder is already on the pool from a prior run).
-  const book = await HadronOrderbook.load({ connection, pool: poolAddress });
-  if (book.pool.getActiveCurves().riskBid.points.length < 2) {
-    // Deposit references the operator's base (X) token account even when only
-    // USDC is deposited, so both operator ATAs must exist first.
-    await getOrCreateAssociatedTokenAccount(connection, operator, mintX, operator.publicKey);
-    await getOrCreateAssociatedTokenAccount(connection, operator, mintY, operator.publicKey);
-    const mid = book.pool.getMidprice();
-    let totalUsd = 0;
-    for (const rung of cfg.ladder) {
-      book.placeOrder({ side: "bid", size: rung.usd / mid, spreadBps: rung.spreadBps });
-      totalUsd += rung.usd;
-    }
-    const ladderIxs = [
-      book.updateMidprice(operator.publicKey, mid, book.pool.oracle.sequence + 1n),
-      book.deposit(operator.publicKey, { amountX: 0n, amountY: usdToAtoms(totalUsd) }),
-      ...book.push(operator.publicKey),
-    ];
-    await sendTx(connection, [operator], ladderIxs, "PlaceLadder");
-  }
-
   return { pool: cfg.pool, created: !alreadyLive };
+}
+
+/**
+ * Phase 2 (`npm run buyback`): seed the pool with the resting bid ladder,
+ * funded by the treasury USDC, in one atomic tx. Returns false if the ladder
+ * was already on the pool.
+ */
+export async function seedLadder(
+  connection: Connection,
+  operator: Keypair,
+  cfg: BuybackConfig,
+  anchorPrice: number
+): Promise<boolean> {
+  if (!cfg.pool) throw new Error("No pool in config; run init first.");
+  if (!cfg.baseMint || !cfg.usdcMint) throw new Error("Mints missing from config; run init first.");
+  const poolAddress = new PublicKey(cfg.pool);
+  const mintX = new PublicKey(cfg.baseMint);
+  const mintY = new PublicKey(cfg.usdcMint);
+
+  const book = await HadronOrderbook.load({ connection, pool: poolAddress });
+  if (book.pool.getActiveCurves().riskBid.points.length >= 2) return false;
+
+  // Deposit references the operator's base (X) token account even when only
+  // USDC is deposited, so both operator ATAs must exist first.
+  await getOrCreateAssociatedTokenAccount(connection, operator, mintX, operator.publicKey);
+  await getOrCreateAssociatedTokenAccount(connection, operator, mintY, operator.publicKey);
+  const mid = anchorPrice;
+  let totalUsd = 0;
+  for (const rung of cfg.ladder) {
+    book.placeOrder({ side: "bid", size: rung.usd / mid, spreadBps: rung.spreadBps });
+    totalUsd += rung.usd;
+  }
+  const ladderIxs = [
+    book.updateMidprice(operator.publicKey, mid, book.pool.oracle.sequence + 1n),
+    book.deposit(operator.publicKey, { amountX: 0n, amountY: usdToAtoms(totalUsd) }),
+    ...book.push(operator.publicKey),
+  ];
+  await sendTx(connection, [operator], ladderIxs, "PlaceLadder");
+  return true;
 }
 
 /** Mint mock base tokens (the buyback asset) to any wallet so it can sell. */
@@ -121,7 +130,7 @@ export async function faucetBase(
   recipient: PublicKey,
   uiAmount: number
 ): Promise<string> {
-  if (!cfg.baseMint) throw new Error("Base mint not created yet; init buybacks first.");
+  if (!cfg.baseMint) throw new Error("Base mint not created yet; init first.");
   const mint = new PublicKey(cfg.baseMint);
   const ata = await getOrCreateAssociatedTokenAccount(connection, operator, mint, recipient);
   const sig = await mintTo(connection, operator, mint, ata.address, operator, baseToAtoms(uiAmount));

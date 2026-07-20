@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 import { Command } from "commander";
 import { initCommand, faucetCommand } from "./commands/init.js";
+import { buybackCommand } from "./commands/buyback.js";
 import { crankCommand } from "./commands/crank.js";
 import { statusCommand } from "./commands/status.js";
 import { closeCommand } from "./commands/close.js";
 
-// Public RPCs sometimes fail deep inside web3.js (e.g. websocket 429s) on
-// paths we don't await; log and keep going instead of crashing the crank.
+// Public RPCs sometimes fail deep inside web3.js on paths we don't await;
+// log and keep going instead of crashing the crank.
 process.on("unhandledRejection", (err) => {
   console.error(`rpc warning: ${err instanceof Error ? err.message : err}`);
 });
@@ -14,24 +15,32 @@ process.on("unhandledRejection", (err) => {
 const program = new Command();
 
 program
-  .name("shfl-buyback")
+  .name("buyback-cli")
   .description(
-    "SHFL x Hadron buyback demo backend: a live-price crank + local API the dashboard drives (init buybacks, faucet, build swaps)."
+    "Hadron buybacks demo. Phase 1: init (empty pool + opens the page). Phase 2: buyback (seed orders + run the crank). The dashboard reads everything from the chain."
   );
 
 program
-  .command("crank")
-  .description("Run the crank: stream the price and post it on-chain as the pool midprice (the dashboard reads the chain)")
-  .option("--interval <ms>", "tick interval in ms (default from config)")
-  .option("--sim", "use a simulated random-walk price instead of the live exchange feed")
-  .action(run(crankCommand));
-
-program
   .command("init")
-  .description("Headless: create the wallet/mints if needed and stand up the pool + ladder at the live price")
+  .description("Create the wallet/mints if needed, stand up an EMPTY bid-only pool, open the page")
   .option("--keypair <path>", "operator keypair path")
   .option("--url <rpc>", "RPC endpoint")
   .action(run(initCommand));
+
+program
+  .command("buyback")
+  .description("Paste a pool ID, seed the resting bid ladder, then run the crank")
+  .option("--pool <address>", "pool ID (skips the prompt)")
+  .option("--interval <ms>", "crank tick interval in ms (default from config)")
+  .option("--live", "use the live exchange feed instead of the deterministic sim")
+  .action(run(buybackCommand));
+
+program
+  .command("crank")
+  .description("Run just the crank against the configured pool (deterministic sim price by default)")
+  .option("--interval <ms>", "tick interval in ms (default from config)")
+  .option("--live", "use the live exchange feed instead of the deterministic sim")
+  .action(run(crankCommand));
 
 program
   .command("faucet")

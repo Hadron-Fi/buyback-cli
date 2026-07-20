@@ -1,23 +1,26 @@
+import { exec } from "node:child_process";
 import { PublicKey } from "@solana/web3.js";
 import {
   ensureOperatorKeypair,
   ensureSol,
   getConnection,
+  loadOrCreateConfig,
   loadConfig,
   saveConfig,
   solscanAccount,
 } from "../config.js";
-import { PriceFeed } from "../lib/price-feed.js";
-import { initBuybacks, faucetBase } from "../buyback.js";
+import { simPrice } from "../lib/sim.js";
+import { initPool, faucetBase } from "../buyback.js";
 
 /**
- * Headless "init buybacks" for CLI/testing. The normal flow triggers this from
- * the dashboard via the crank server, but this command lets you set the pool up
- * without a browser. Creates the wallet if needed, funds it, reads the live
- * price, and stands up the pool + ladder.
+ * Phase 1: `npm run init`. Creates the wallet/mints if needed and stands up
+ * an EMPTY bid-only pool (no orders), then opens the dashboard page for that
+ * pool. The page's market line starts immediately: it is the deterministic
+ * sim keyed by the pool ID, computed in the browser. Phase 2 is
+ * `npm run buyback`, which seeds the orders and starts the crank.
  */
 export async function initCommand(opts: { keypair?: string; url?: string }): Promise<void> {
-  const cfg = loadConfig();
+  const cfg = loadOrCreateConfig();
   if (opts.keypair) cfg.keypairPath = opts.keypair;
   if (opts.url) cfg.rpcUrl = opts.url;
 
@@ -32,14 +35,20 @@ export async function initCommand(opts: { keypair?: string; url?: string }): Pro
   const sol = await ensureSol(connection, operator.publicKey, 1);
   if (sol < 0.5e9) throw new Error("Not enough devnet SOL. Fund the wallet above and re-run.");
 
-  const price = await new PriceFeed(cfg.priceSymbols).fetchPrice().catch(() => cfg.startPrice);
-  console.log(`${cfg.baseSymbol}/USD anchor: $${price.toFixed(4)}. Standing up the buyback pool...`);
-  const r = await initBuybacks(connection, operator, cfg, price);
-  console.log(`\nBuybacks live: pool ${r.pool}`);
-  console.log(`  ${solscanAccount(r.pool, connection.rpcEndpoint)}`);
+  // Anchor at the sim's current value for a fresh pool (the sim is seeded by
+  // pool ID, which does not exist yet, so use the neutral seed; the crank
+  // re-anchors the mid within seconds of starting anyway).
+  const anchor = simPrice("hadron", Date.now());
+  console.log(`Standing up an empty bid-only pool anchored at $${anchor.toFixed(4)}...`);
+  const r = await initPool(connection, operator, cfg, anchor);
+
   const link = `${cfg.dashboardUrl}?pool=${r.pool}`;
   console.log(`\nPool ID: ${r.pool}`);
-  console.log(`Watch it live: ${link}`);
+  console.log(`  ${solscanAccount(r.pool, connection.rpcEndpoint)}`);
+  console.log(`Page: ${link}`);
+  console.log('\nNext: npm run buyback   (paste the pool ID; seeds the orders and starts the crank)');
+  const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
+  exec(`${opener} "${link}"`);
 }
 
 export async function faucetCommand(opts: { to?: string; amount: string }): Promise<void> {

@@ -46,20 +46,11 @@ npm install
 
 ## The flow
 
-1. **Start the crank.** From this directory:
-   ```bash
-   npm run crank            # live Binance SOL/USD feed (default)
-   npm run crank -- --sim   # simulated random-walk price, for demos when the market is quiet
-   ```
-   It funds its operator wallet, connects to the price source, and starts posting. The posted oracle mid is `min(EMA, market)`: smoothed on the way up, instant on the way down, so the pool never overbids off a lagging EMA during a dump.
+1. **`npm run init`** creates the wallet/mints if needed and stands up an EMPTY bid-only pool (no orders yet), then prints the pool ID and opens the page for it. The page's market line starts immediately: the market price is a deterministic sim keyed by the pool ID, computed identically by the CLI and the browser, so there is nothing to connect.
 
-2. **Open the page.** The crank opens `dashboard.hadron.fi/buybacks?pool=<your pool>` for you once a pool exists; `init` prints the same link. You can also paste the pool ID into the page's Load Pool box. It shows the **asset midprice** with the **best bid** below it, and the price chart runs. No pool exists yet.
+2. **`npm run buyback`** prompts you to paste the pool ID (Enter accepts the one from init), seeds the resting bid ladder, and starts the crank in the same process. On the page: a toast fires the moment the orders land, the book fills in, and the on-chain oracle line joins the market line on the chart. The crank posts `min(EMA, market)` so the oracle trails rallies and tracks drops instantly.
 
-3. **Init the buybacks.** From this repo run `npm run cli -- init`. The page shows each step flip live (mints, pool, kill switch, ladder). It creates the mock USDC treasury, opens the bid-only Hadron pool anchored at the live price, deposits, and posts the resting bid ladder. Within a couple of seconds the book fills in as an order book, and the crank starts posting the midprice on-chain so the ladder chases the market.
-
-4. **Sell into the buybacks.** Connect your wallet. In the swap box, click **Get 10 test SOL** to faucet the mock base token, enter an amount, and **Sell**. The wallet signs; the crank broadcasts; the fill shows up in the book and the pool stats.
-
-5. **Kill switch.** Stop the crank (Ctrl-C). After `deltaStaleness` slots (~10s) the oracle goes stale: sells revert and the page flips the kill-switch badge to red. Restart the crank and sells work again.
+3. **Sell into it.** Connect a devnet wallet on the page, faucet test SOL with the shown CLI command, and sell; the Buy button demonstrates the on-chain rejection. `npm run cli -- status` and `npm run cli -- close` round out ops. Pass `--live` to `buyback`/`crank` to use the real Binance feed instead of the sim (the page's market line stays sim, so expect divergence).
 
 ## Page panels (`/buybacks`)
 

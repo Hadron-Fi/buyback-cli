@@ -1,8 +1,8 @@
 import { statSync } from "node:fs";
-import { exec } from "node:child_process";
 import { PublicKey } from "@solana/web3.js";
 import { Hadron, decodeMidpriceOracle, toQ32 } from "@hadron-fi/sdk-v2";
 import {
+  BuybackConfig,
   ensureOperatorKeypair,
   ensureSol,
   getConnection,
@@ -12,19 +12,18 @@ import {
   CONFIG_PATH,
 } from "../config.js";
 import { PriceFeed, Ema } from "../lib/price-feed.js";
+import { simPrice } from "../lib/sim.js";
 
 /**
- * The crank: a pure price loop. It streams the base/USD price (live feed, or
- * a random walk with --sim), keeps an EMA, and posts min(EMA, market) as the
- * on-chain pool midprice at a throttled cadence. The dashboard page reads
- * everything from the CHAIN by pool ID, so the crank serves nothing: the
- * chain is the only link between this process and the UI.
+ * The crank: a pure price loop. The market price is the DETERMINISTIC sim
+ * keyed by the pool ID (the dashboard page computes the exact same line
+ * independently), or the live exchange feed with --live. It EMA-smooths the
+ * price and posts min(EMA, market) as the on-chain pool midprice at a
+ * throttled cadence. The chain is the only link between this process and
+ * the UI.
  */
-export async function crankCommand(opts: {
-  interval?: string;
-  sim?: boolean;
-}): Promise<void> {
-  let cfg = loadOrCreateConfig();
+export async function runCrank(opts: { interval?: string; live?: boolean }): Promise<void> {
+  let cfg: BuybackConfig = loadOrCreateConfig();
   const connection = getConnection(cfg);
   const intervalMs = opts.interval ? Number(opts.interval) : cfg.crank.intervalMs;
 
@@ -35,21 +34,14 @@ export async function crankCommand(opts: {
   await ensureSol(connection, operator.publicKey, 1);
 
   const ema = new Ema(cfg.crank.emaAlpha);
+  const feed = opts.live ? new PriceFeed(cfg.priceSymbols) : null;
+  console.log(
+    `Price source: ${feed ? `live (${cfg.priceSymbols.join(" -> ")})` : "deterministic sim (seeded by pool ID; the page computes the same line)"}`
+  );
 
-  // Price source: live exchange feed by default; --sim (or priceMode "sim"
-  // in the config) switches to a dummy random walk for demos.
-  const simMode = opts.sim || cfg.priceMode === "sim";
-  const feed = simMode ? null : new PriceFeed(cfg.priceSymbols);
-  console.log(`Price source: ${simMode ? "simulated random walk" : `live (${cfg.priceSymbols.join(" -> ")})`}`);
-  let simPrice = cfg.startPrice;
-  const simVol = cfg.simVolPerTick ?? 0.0012;
   function samplePrice(): Promise<number> {
     if (feed) return feed.fetchPrice();
-    const u1 = Math.max(Math.random(), 1e-12);
-    const u2 = Math.random();
-    const z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
-    simPrice *= Math.exp(simVol * z - (simVol * simVol) / 2);
-    return Promise.resolve(simPrice);
+    return Promise.resolve(simPrice(cfg.pool ?? "hadron", Date.now()));
   }
 
   let pool: Hadron | null = null;
@@ -58,14 +50,9 @@ export async function crankCommand(opts: {
   }
   if (cfg.pool) await setPool(cfg.pool);
 
-  const dashLink = () => `${cfg.dashboardUrl}${cfg.pool ? `?pool=${cfg.pool}` : ""}`;
-  console.log(`Dashboard: ${dashLink()}`);
-  const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
-  exec(`${opener} "${dashLink()}"`);
-
-  // The CLI (`close`, `init`) edits buyback.config.json from another process
-  // while the crank runs; watch the file so the crank never posts to a stale
-  // pool and picks up a fresh one without a restart.
+  // The CLI (`close`, `init`, `buyback`) edits buyback.config.json from
+  // another process while the crank runs; watch the file so the crank never
+  // posts to a stale pool and picks up a fresh one without a restart.
   let cfgMtime = statSync(CONFIG_PATH).mtimeMs;
   async function reloadConfigIfChanged(): Promise<void> {
     let mtime: number;
@@ -81,7 +68,6 @@ export async function crankCommand(opts: {
     if (cfg.pool !== prevPool) {
       console.log(`Config changed: pool ${prevPool ?? "none"} -> ${cfg.pool ?? "none"}; reloading`);
       await setPool(cfg.pool);
-      if (cfg.pool) console.log(`Dashboard: ${dashLink()}`);
     }
   }
 
@@ -119,7 +105,7 @@ export async function crankCommand(opts: {
           (pool ? "" : "  (no pool)")
       );
       if (!pool && tickCount % 20 === 1) {
-        console.log('No pool yet: run "npm run cli -- init" in another terminal to stand up the buybacks.');
+        console.log('No pool yet: run "npm run init" in another terminal first.');
       }
 
       const pushEvery = cfg.crank.pushIntervalMs ?? 4000;
@@ -141,4 +127,8 @@ export async function crankCommand(opts: {
 
   await tick();
   setInterval(tick, intervalMs);
+}
+
+export async function crankCommand(opts: { interval?: string; live?: boolean }): Promise<void> {
+  return runCrank(opts);
 }
