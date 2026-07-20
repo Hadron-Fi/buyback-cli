@@ -1,12 +1,18 @@
 import { exec } from "node:child_process";
 import { PublicKey } from "@solana/web3.js";
 import {
+  createAssociatedTokenAccountIdempotentInstruction,
+  getAssociatedTokenAddressSync,
+} from "@solana/spl-token";
+import { Hadron } from "@hadron-fi/sdk-v2";
+import {
   ensureOperatorKeypair,
   ensureSol,
   getConnection,
   loadOrCreateConfig,
   loadConfig,
   saveConfig,
+  sendTx,
   solscanAccount,
 } from "../config.js";
 import { simPrice } from "../lib/sim.js";
@@ -34,6 +40,34 @@ export async function initCommand(opts: { keypair?: string; url?: string }): Pro
 
   const sol = await ensureSol(connection, operator.publicKey, 1);
   if (sol < 0.5e9) throw new Error("Not enough devnet SOL. Fund the wallet above and re-run.");
+
+  // init means START FRESH: if a previous pool is configured, close it
+  // (sweeps its vaults back to the treasury) and create a brand-new empty
+  // one, so the page always opens on an empty book.
+  if (cfg.pool) {
+    console.log(`Closing previous pool ${cfg.pool}...`);
+    try {
+      const prev = await Hadron.load(connection, new PublicKey(cfg.pool));
+      const withdrawAuthority = prev.config.withdrawAuthority;
+      const ataX = getAssociatedTokenAddressSync(prev.config.mintX, withdrawAuthority, true);
+      const ataY = getAssociatedTokenAddressSync(prev.config.mintY, withdrawAuthority, true);
+      await sendTx(
+        connection,
+        [operator],
+        [
+          createAssociatedTokenAccountIdempotentInstruction(operator.publicKey, ataX, withdrawAuthority, prev.config.mintX),
+          createAssociatedTokenAccountIdempotentInstruction(operator.publicKey, ataY, withdrawAuthority, prev.config.mintY),
+          prev.closePool(operator.publicKey, ataX, ataY),
+        ],
+        "close-previous-pool"
+      );
+    } catch (err) {
+      console.log(`  (could not close it: ${err instanceof Error ? err.message.slice(0, 80) : err}; continuing)`);
+    }
+    delete cfg.pool;
+    delete cfg.seed;
+    saveConfig(cfg);
+  }
 
   // Anchor at the sim's current value for a fresh pool (the sim is seeded by
   // pool ID, which does not exist yet, so use the neutral seed; the crank
