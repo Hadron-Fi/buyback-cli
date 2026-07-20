@@ -37,7 +37,9 @@ export async function initCommand(opts: { keypair?: string; url?: string }): Pro
   const r = await initBuybacks(connection, operator, cfg, price);
   console.log(`\nBuybacks live: pool ${r.pool}`);
   console.log(`  ${solscanAccount(r.pool, connection.rpcEndpoint)}`);
-  console.log(`\nWatch it live: ${cfg.dashboardUrl}`);
+  const link = `${cfg.dashboardUrl}?pool=${r.pool}`;
+  console.log(`\nPool ID: ${r.pool}`);
+  console.log(`Watch it live: ${link}`);
 }
 
 export async function faucetCommand(opts: { to?: string; amount: string }): Promise<void> {

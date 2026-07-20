@@ -21,9 +21,8 @@ program
 
 program
   .command("crank")
-  .description("Run the crank + dashboard API: stream the live price, post it on-chain, serve the dashboard's backend")
+  .description("Run the crank: stream the price and post it on-chain as the pool midprice (the dashboard reads the chain)")
   .option("--interval <ms>", "tick interval in ms (default from config)")
-  .option("--port <port>", "API port (default from config)")
   .option("--sim", "use a simulated random-walk price instead of the live exchange feed")
   .action(run(crankCommand));
 

@@ -2,7 +2,7 @@
 
 Hyperliquid-style buybacks on Solana, built on [Hadron](https://docs.hadron.fi), with a price-chasing crank and a live UI. Runs end to end on devnet.
 
-This repo is the **backend**: the price crank, a small local API, and the ops CLI (init / faucet / status / close). The **UI is a page in the hadron dashboard** (neutron repo, `frontend/hadron-dashboard`, route `/buybacks`, intentionally unlinked from the sidebar). Run the crank here, init via the CLI here, open that page there.
+This repo is the **backend**: the price crank and the ops CLI (init / faucet / status / close). The **UI is a page in the hadron dashboard** at [dashboard.hadron.fi/buybacks](https://dashboard.hadron.fi/buybacks) (intentionally unlinked from the sidebar). The two are tied together only through the CHAIN: init prints a pool ID, the page reads that pool straight from devnet by ID. No local server, no HTTP bridge.
 
 Hyperliquid's Assistance Fund does not market-buy: it posts resting limit orders below the book's midprice and lets sellers come to it. That gets better execution, dampens sell pressure without pulling liquidity, and provides buy support exactly when it is needed. This repo models that flow with a **bid-only Hadron pool**:
 
@@ -17,12 +17,11 @@ The demo buys back a **mock SOL token** priced by the real Binance SOL/USD feed 
 
 ## Architecture
 
-- **This service (`npm run crank`)** runs the price crank and a small local API (default `http://localhost:8787`). It holds an unattended operator keypair, streams the live price, posts it on-chain as the pool midprice every tick, and exposes endpoints the dashboard page calls to init the buybacks, faucet the base token, build sell transactions, and broadcast them.
-- **The UI** lives in the neutron repo: `frontend/hadron-dashboard` at `/buybacks` (`components/buybacks/buyback-dashboard.tsx`). It polls this service's `/api/state` and drives it, using the dashboard's own wallet connection as the **seller**. Pool init is CLI-only (`npm run cli -- init` here); the page shows each init step flipping live as the CLI progresses.
+- **This repo (`npm run crank`)** is a pure price loop: it streams the base/USD price (live Binance bookTicker mid, or a `--sim` random walk), EMA-smooths it, and posts `min(EMA, market)` as the on-chain pool midprice at a throttled cadence (`crank.pushIntervalMs`). It serves nothing.
+- **The CLI** (`npm run cli -- init|faucet|status|close`) owns the operator key: init stands up the mints, pool, kill switch, and bid ladder, then prints the pool ID and a direct dashboard link (`?pool=<id>`).
+- **The page** reads everything from devnet by pool ID: config, oracle mid and its transaction history, vaults, curves, fills. Sells are built and sent in the browser with the connected wallet; the Buy button simulates against the real program and shows the structural rejection; the faucet is a copyable CLI command (it needs the operator key).
 
-Privileged actions (create pool, deposit, curve, midprice) are signed by the crank's operator key, so there is never a wallet-popup storm and midprice updates run unattended. Sells are built by the crank, signed by the connected wallet in the browser, and broadcast by the crank on its devnet RPC (so the send does not depend on the wallet's cluster).
-
-The dashboard page finds this service at `http://localhost:8787` by default; override with `NEXT_PUBLIC_BUYBACK_API` in the dashboard's env to point at a hosted crank.
+Because the chain is the only coupling, the flow is fully deterministic and works identically for a hosted page or a local one: nothing needs HTTPS-to-localhost.
 
 ## How it maps to Hadron
 
@@ -52,9 +51,9 @@ npm install
    npm run crank            # live Binance SOL/USD feed (default)
    npm run crank -- --sim   # simulated random-walk price, for demos when the market is quiet
    ```
-   It funds its operator wallet, connects to the price source, and starts serving the API on `http://localhost:8787`. The posted oracle mid is `min(EMA, market)`: smoothed on the way up, instant on the way down, so the pool never overbids off a lagging EMA during a dump.
+   It funds its operator wallet, connects to the price source, and starts posting. The posted oracle mid is `min(EMA, market)`: smoothed on the way up, instant on the way down, so the pool never overbids off a lagging EMA during a dump.
 
-2. **Open the page.** The crank opens [dashboard.hadron.fi/buybacks](https://dashboard.hadron.fi/buybacks) for you (the page is intentionally unlinked from the sidebar; demo only). For local dashboard development, run `npm run dev` in the dashboard repo and go to `/buybacks` instead. It shows the **asset midprice** with the **best bid** below it, and the price chart runs. No pool exists yet.
+2. **Open the page.** The crank opens `dashboard.hadron.fi/buybacks?pool=<your pool>` for you once a pool exists; `init` prints the same link. You can also paste the pool ID into the page's Load Pool box. It shows the **asset midprice** with the **best bid** below it, and the price chart runs. No pool exists yet.
 
 3. **Init the buybacks.** From this repo run `npm run cli -- init`. The page shows each step flip live (mints, pool, kill switch, ladder). It creates the mock USDC treasury, opens the bid-only Hadron pool anchored at the live price, deposits, and posts the resting bid ladder. Within a couple of seconds the book fills in as an order book, and the crank starts posting the midprice on-chain so the ladder chases the market.
 
@@ -81,7 +80,6 @@ Written on first crank run; edit and restart to change.
 | `startPrice` | Fallback price if the feed is unreachable at init. |
 | `deltaStaleness` | Kill-switch threshold in slots (default 25, about 10s). 0 disables it. |
 | `ladder` | Array of `{ usd, spreadBps }` rungs, tightest first. |
-| `crankApiPort` | Local API port the page polls (default 8787). |
 | `crank.intervalMs` | Tick interval (default 2000). |
 | `crank.emaAlpha` | EMA smoothing factor, 0..1 (default 0.2). |
 
@@ -96,16 +94,9 @@ The dashboard covers the whole flow; these are for scripting or debugging.
 | `npm run cli -- status` | Pool state, oracle freshness, vaults, per-rung fill progress. |
 | `npm run cli -- close` | Close the pool and sweep both vaults back to the treasury. |
 
-## Crank API (what the page calls)
-
-`GET /api/state` (price, EMA, best bid, pool + ladder state, history), `POST /api/init`, `POST /api/faucet {wallet, amount}`, `POST /api/build-swap {seller, amountBase}` (returns an unsigned tx), `POST /api/send {signedTxBase64}` (broadcasts on devnet). CORS-open so the dashboard can call it.
-
 ## Hosting on a subdomain later
 
-The page is a normal route in the dashboard, so it deploys with the dashboard. To run it against a hosted crank instead of localhost:
-
-- Run this crank on a small always-on box (it holds the operator key and needs devnet SOL). Expose its API port behind a URL over HTTPS.
-- Set `NEXT_PUBLIC_BUYBACK_API` in the dashboard's env to that URL. CORS is already open; nothing else changes.
+The page is a normal dashboard route reading public chain state, so it deploys with the dashboard and needs nothing else. Optional page params: `?pool=<id>` (which pool to show) and `?rpc=<url>` (use your own devnet RPC for better rate limits; the default is the public endpoint).
 
 ## What changes for production
 

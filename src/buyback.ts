@@ -2,7 +2,6 @@ import {
   Connection,
   Keypair,
   PublicKey,
-  Transaction,
 } from "@solana/web3.js";
 import {
   createMint,
@@ -14,7 +13,6 @@ import {
 import { Hadron, HadronOrderbook, PoolState, toQ32 } from "@hadron-fi/sdk-v2";
 import {
   BuybackConfig,
-  explainTxError,
   saveConfig,
   sendTx,
   solscanTx,
@@ -23,7 +21,6 @@ import {
   BASE_DECIMALS,
   USD_DECIMALS,
 } from "./config.js";
-import { estimateSellOutput } from "./lib/book-math.js";
 
 /**
  * One-shot "init buybacks": create the mock mints if needed, create the
@@ -130,136 +127,4 @@ export async function faucetBase(
   const sig = await mintTo(connection, operator, mint, ata.address, operator, baseToAtoms(uiAmount));
   console.log(`Faucet ${uiAmount} ${cfg.baseSymbol} -> ${recipient.toBase58()}: ${solscanTx(sig, connection.rpcEndpoint)}`);
   return sig;
-}
-
-/** Mock-token balances for a wallet (0 when the ATA does not exist yet). */
-export async function walletBalances(
-  connection: Connection,
-  cfg: BuybackConfig,
-  wallet: PublicKey
-): Promise<{ base: number; usdc: number }> {
-  const out = { base: 0, usdc: 0 };
-  const entries: Array<[keyof typeof out, string | undefined]> = [
-    ["base", cfg.baseMint],
-    ["usdc", cfg.usdcMint],
-  ];
-  for (const [key, mintStr] of entries) {
-    if (!mintStr) continue;
-    try {
-      const ata = getAssociatedTokenAddressSync(new PublicKey(mintStr), wallet);
-      const bal = await connection.getTokenAccountBalance(ata);
-      out[key] = bal.value.uiAmount ?? 0;
-    } catch {
-      // no ATA yet -> 0
-    }
-  }
-  return out;
-}
-
-/**
- * Demonstrate that buys are structurally impossible: simulate a USDC->base
- * swap against the real program (operator as the buyer, no send, no fee) and
- * return the on-chain rejection. The pool has no ask curve, so the program
- * refuses to sell the base token.
- */
-export async function simulateBuy(
-  connection: Connection,
-  operator: Keypair,
-  cfg: BuybackConfig,
-  amountUsdc: number
-): Promise<{ rejected: boolean; reason: string }> {
-  if (!cfg.pool) throw new Error("No pool yet; init buybacks first.");
-  const pool = await Hadron.load(connection, new PublicKey(cfg.pool));
-  const feeRecipient = pool.feeConfig?.feeRecipient;
-  const ixs = [];
-  if (feeRecipient) {
-    // Fee is taken from the input token (USDC on a buy); its ATA must exist
-    // for the simulation to reach the actual curve check.
-    ixs.push(
-      createAssociatedTokenAccountIdempotentInstruction(
-        operator.publicKey,
-        getAssociatedTokenAddressSync(pool.config.mintY, feeRecipient, true),
-        feeRecipient,
-        pool.config.mintY
-      )
-    );
-  }
-  ixs.push(pool.swap(operator.publicKey, { isX: false, amountIn: usdToAtoms(amountUsdc), minOut: 0n }));
-  const tx = new Transaction().add(...ixs);
-  tx.feePayer = operator.publicKey;
-  tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
-  tx.sign(operator);
-  const sim = await connection.simulateTransaction(tx);
-  if (sim.value.err) {
-    return { rejected: true, reason: explainTxError({ logs: sim.value.logs ?? [] }) };
-  }
-  return { rejected: false, reason: "buy unexpectedly succeeded" };
-}
-
-export interface SellQuote {
-  txBase64: string;
-  estOutUsdc: number;
-  minOutUsdc: number;
-  mid: number;
-  feePpm: number;
-}
-
-/**
- * Build an unsigned sell transaction (seller sells base into the buyback bids)
- * for the browser wallet to sign. Includes idempotent ATA creation for the
- * seller's USDC account and the fee-recipient account. Returns a base64 legacy
- * transaction with the fee payer and a fresh blockhash already set.
- */
-export async function buildSellTx(
-  connection: Connection,
-  cfg: BuybackConfig,
-  seller: PublicKey,
-  amountBase: number,
-  slippageBps: number
-): Promise<SellQuote> {
-  if (!cfg.pool) throw new Error("No pool yet; init buybacks first.");
-  const pool = await Hadron.load(connection, new PublicKey(cfg.pool));
-  const mid = pool.getMidprice();
-  const feePpm = pool.feeConfig?.feePpm ?? 0;
-
-  const amountIn = baseToAtoms(amountBase);
-  const fee = (amountIn * BigInt(feePpm)) / 1_000_000n;
-  const vaultXBal = await connection.getTokenAccountBalance(pool.addresses.vaultX);
-  const bidPoints = pool.getActiveCurves().riskBid.points;
-  if (bidPoints.length < 2) throw new Error("Pool has no bid ladder.");
-  const est = estimateSellOutput(bidPoints, BigInt(vaultXBal.value.amount), amountIn - fee, mid);
-  const minOut = (est.outAtoms * BigInt(10_000 - slippageBps)) / 10_000n;
-
-  const feeRecipient = pool.feeConfig?.feeRecipient;
-  const ixs = [
-    createAssociatedTokenAccountIdempotentInstruction(
-      seller,
-      getAssociatedTokenAddressSync(pool.config.mintY, seller),
-      seller,
-      pool.config.mintY
-    ),
-  ];
-  if (feeRecipient) {
-    ixs.push(
-      createAssociatedTokenAccountIdempotentInstruction(
-        seller,
-        getAssociatedTokenAddressSync(pool.config.mintX, feeRecipient, true),
-        feeRecipient,
-        pool.config.mintX
-      )
-    );
-  }
-  ixs.push(pool.swap(seller, { isX: true, amountIn, minOut }));
-
-  const tx = new Transaction().add(...ixs);
-  tx.feePayer = seller;
-  tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
-
-  return {
-    txBase64: tx.serialize({ requireAllSignatures: false }).toString("base64"),
-    estOutUsdc: Number(est.outAtoms) / 10 ** USD_DECIMALS,
-    minOutUsdc: Number(minOut) / 10 ** USD_DECIMALS,
-    mid,
-    feePpm,
-  };
 }

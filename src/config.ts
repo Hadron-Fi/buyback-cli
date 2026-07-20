@@ -44,7 +44,6 @@ export interface BuybackConfig {
   /** The resting bid ladder, tightest first. */
   ladder: LadderRung[];
   /** Local port the crank's API server listens on. */
-  crankApiPort: number;
   /** Hosted dashboard page the crank points you at (the UI for this backend). */
   dashboardUrl: string;
   crank: {
@@ -78,7 +77,6 @@ export const DEFAULT_CONFIG: BuybackConfig = {
     { usd: 2000, spreadBps: 200 },
     { usd: 4000, spreadBps: 350 },
   ],
-  crankApiPort: 8787,
   dashboardUrl: "https://dashboard.hadron.fi/buybacks",
   // 1s sampling: ticks are cheap (the on-chain push runs decoupled behind a
   // busy flag). EMA alpha 0.08 ≈ 30s of smoothing at 1s ticks, slow enough
