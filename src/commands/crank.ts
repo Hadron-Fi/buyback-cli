@@ -238,6 +238,7 @@ export async function crankCommand(opts: {
   // chain push runs fire-and-forget behind a busy flag.
   let chainBusy = false;
   let tickCount = 0;
+  let lastPushAt = 0;
 
   async function tick(): Promise<void> {
     try {
@@ -278,7 +279,12 @@ export async function crankCommand(opts: {
         console.log('No pool yet: run "npm run cli -- init" in another terminal to stand up the buybacks.');
       }
 
-      if (pool && !chainBusy) {
+      // Throttle on-chain pushes: every tick would drown rate-limited RPCs
+      // (the public devnet endpoint 429s hard); the price/UI loop stays at
+      // full cadence regardless.
+      const pushEvery = cfg.crank.pushIntervalMs ?? 4000;
+      if (pool && !chainBusy && Date.now() - lastPushAt >= pushEvery) {
+        lastPushAt = Date.now();
         chainBusy = true;
         refreshPoolState(oracleMid)
           .catch((err) => {

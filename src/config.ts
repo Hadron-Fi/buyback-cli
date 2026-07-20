@@ -52,6 +52,8 @@ export interface BuybackConfig {
     intervalMs: number;
     /** EMA smoothing factor (0..1, higher = follows price faster). */
     emaAlpha: number;
+    /** Minimum ms between on-chain midprice pushes (raise on rate-limited RPCs). */
+    pushIntervalMs: number;
   };
 }
 
@@ -81,7 +83,7 @@ export const DEFAULT_CONFIG: BuybackConfig = {
   // 1s sampling: ticks are cheap (the on-chain push runs decoupled behind a
   // busy flag). EMA alpha 0.08 ≈ 30s of smoothing at 1s ticks, slow enough
   // that the oracle line visibly trails the price on the chart.
-  crank: { intervalMs: 1000, emaAlpha: 0.08 },
+  crank: { intervalMs: 1000, emaAlpha: 0.08, pushIntervalMs: 4000 },
 };
 
 export const CONFIG_PATH = resolve(process.cwd(), "buyback.config.json");
